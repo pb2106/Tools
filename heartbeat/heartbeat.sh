@@ -1,26 +1,56 @@
 #!/bin/bash
-# heartbeat.sh - terminal laptop heartbeat daemon
+# heartbeat.sh - terminal laptop heartbeat daemon with menu design
 
-HEARTBEAT="$HOME/heartbeat.wav"      # path to your 190ms heartbeat
-FLATLINE="$HOME/ecg_flatline.wav"    # ECG flatline
+# -------- DEPENDENCY CHECK --------
+for cmd in aplay bc; do
+    if ! command -v $cmd &>/dev/null; then
+        echo "Error: $cmd is not installed. Install it and try again."
+        exit 1
+    fi
+done
+
+# -------- CONFIG --------
+HEARTBEAT="/home/naegleria/tools/heartbeat/heartbeat.wav"
+HEARTBEAT_MID="/home/naegleria/tools/heartbeat/heartbeatmid.wav"
+HEARTBEAT_LOUD="/home/naegleria/tools/heartbeat/heartbeatloud.wav"
+NOHEARTBEAT="/home/naegleria/tools/heartbeat/noheartbeat.wav"
+FLATLINE="/home/naegleria/tools/heartbeat/ecgsound_flatline.wav"
 PID_FILE="/tmp/heartbeat.pid"
+BEAT_LEN=0.19   # 190 ms heartbeat length
 
-# Display help
-function show_help() {
-    echo "Usage: ./heartbeat.sh [start|stop|status|help]"
-    echo
-    echo "Commands:"
-    echo "  start   Start the heartbeat daemon"
-    echo "  stop    Stop the heartbeat daemon"
-    echo "  status  Show if heartbeat is running"
-    echo "  help    Show this help"
-    exit 0
+# -------- COLORS --------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m'
+
+# -------- UI --------
+print_header() {
+    echo -e "${MAGENTA}"
+    echo "===================================="
+    echo "     💓  LAPTOP HEARTBEAT  💓"
+    echo "===================================="
+    echo -e "${NC}"
 }
 
-# Start heartbeat loop
-function start_heartbeat() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "Heartbeat already running!"
+show_help() {
+    print_header
+    echo -e "${CYAN}Usage: heartbeat [start|stop|status|test|help]${NC}\n"
+    echo -e "${GREEN}Commands:${NC}"
+    echo -e "  ${YELLOW}start${NC}   Start battery-driven heartbeat daemon"
+    echo -e "  ${YELLOW}stop${NC}    Stop heartbeat daemon"
+    echo -e "  ${YELLOW}status${NC}  Show daemon status"
+    echo -e "  ${YELLOW}test${NC}    Play 3s demo of all heartbeat states"
+    echo -e "  ${YELLOW}help${NC}    Show this menu\n"
+}
+
+# -------- HEARTBEAT LOOP --------
+start_heartbeat() {
+    print_header
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo -e "${RED}Heartbeat already running.${NC}"
         return
     fi
 
@@ -29,66 +59,114 @@ function start_heartbeat() {
             LEVEL=$(cat /sys/class/power_supply/BAT0/capacity)
             STATUS=$(cat /sys/class/power_supply/BAT0/status)
 
-            # Determine BPM
-            if [ "$STATUS" == "Charging" ]; then
-                INTERVAL=0.857  # 70 BPM
+            if [ "$STATUS" = "Charging" ]; then
+                BPM=55
+                INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+                SOUND="$HEARTBEAT"
+
             elif [ "$LEVEL" -ge 71 ]; then
-                BPM=$(( RANDOM % 16 + 60 ))  # 60–75
-                INTERVAL=$(echo "scale=3; 60 / $BPM" | bc)
+                # CALM → slower
+                BPM=$((RANDOM % 11 + 50))   # BPM
+                INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+                SOUND="$HEARTBEAT"
+
             elif [ "$LEVEL" -ge 21 ]; then
-                BPM=$(( RANDOM % 21 + 80 ))  # 80–100
-                INTERVAL=$(echo "scale=3; 60 / $BPM" | bc)
+                # NORMAL → shifted to anxious
+                BPM=$((RANDOM % 21 + 70))   # BPM
+                INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+                SOUND="$HEARTBEAT_MID"
+
             elif [ "$LEVEL" -ge 6 ]; then
-                BPM=$(( RANDOM % 31 + 110 )) # 110–140
-                INTERVAL=$(echo "scale=3; 60 / $BPM" | bc)
+                # ANXIOUS
+                BPM=$((RANDOM % 31 + 100))  # BPM
+                INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+                SOUND="$HEARTBEAT_LOUD"
+
             else
-                aplay "$FLATLINE"
-                break
+                # CRITICAL - same speed as anxious, loudest
+                BPM=$((RANDOM % 31 + 100))  # BPM
+                INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+                SOUND="$NOHEARTBEAT"
             fi
 
-            # Play heartbeat asynchronously
-            aplay "$HEARTBEAT" &
-
-            # Sleep for interval minus heartbeat duration (0.19s)
-            SLEEP_TIME=$(echo "$INTERVAL - 0.19" | bc)
+            aplay "$SOUND" &>/dev/null &
+            SLEEP_TIME=$(echo "$INTERVAL - $BEAT_LEN" | bc)
             (( $(echo "$SLEEP_TIME < 0" | bc -l) )) && SLEEP_TIME=0
-            sleep $SLEEP_TIME
+            sleep "$SLEEP_TIME"
         done
     ) &
+
     echo $! > "$PID_FILE"
-    echo "Heartbeat started (PID $(cat $PID_FILE))"
+    echo -e "${GREEN}Heartbeat started (PID $(cat $PID_FILE))${NC}"
 }
 
-# Stop heartbeat
-function stop_heartbeat() {
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 $PID 2>/dev/null; then
-            kill $PID
-            echo "Heartbeat stopped."
-        else
-            echo "No heartbeat running."
-        fi
+# -------- TEST MODE --------
+test_heartbeat() {
+    print_header
+    echo -e "${CYAN}Running heartbeat self-test…${NC}\n"
+
+    play_state() {
+        local NAME=$1
+        local BPM=$2
+        local SOUND_FILE=$3
+        local INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+        local END=$((SECONDS + 3))
+
+        echo -e "${YELLOW}▶ $NAME ($BPM BPM)${NC}"
+        while [ $SECONDS -lt $END ]; do
+            aplay "$SOUND_FILE" &>/dev/null &
+            SLEEP_TIME=$(echo "$INTERVAL - $BEAT_LEN" | bc)
+            (( $(echo "$SLEEP_TIME < 0" | bc -l) )) && SLEEP_TIME=0
+            sleep "$SLEEP_TIME"
+        done
+        echo
+    }
+
+    play_state "CALM" 55 "$HEARTBEAT"
+    play_state "NORMAL" 80 "$HEARTBEAT_MID"
+    play_state "ANXIOUS" 110 "$HEARTBEAT_LOUD"
+
+    echo -e "${RED}▶ CRITICAL (loudest)${NC}"
+    local BPM=110
+    local INTERVAL=$(echo "scale=3; 60/$BPM" | bc)
+    local END=$((SECONDS + 3))
+    while [ $SECONDS -lt $END ]; do
+        aplay "$NOHEARTBEAT" &>/dev/null &
+        SLEEP_TIME=$(echo "$INTERVAL - $BEAT_LEN" | bc)
+        (( $(echo "$SLEEP_TIME < 0" | bc -l) )) && SLEEP_TIME=0
+        sleep "$SLEEP_TIME"
+    done
+    echo
+    echo -e "\n${GREEN}Self-test complete.${NC}"
+}
+
+# -------- STOP / STATUS --------
+stop_heartbeat() {
+    print_header
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        kill "$(cat "$PID_FILE")"
         rm -f "$PID_FILE"
+        echo -e "${RED}Heartbeat stopped.${NC}"
     else
-        echo "No heartbeat running."
+        echo -e "${YELLOW}No heartbeat running.${NC}"
     fi
 }
 
-# Show status
-function status_heartbeat() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "Heartbeat is running (PID $(cat $PID_FILE))"
+status_heartbeat() {
+    print_header
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo -e "${GREEN}Heartbeat running (PID $(cat $PID_FILE))${NC}"
     else
-        echo "Heartbeat is not running."
+        echo -e "${YELLOW}Heartbeat not running.${NC}"
     fi
 }
 
-# Main command parsing
+# -------- MAIN --------
 case "$1" in
     start) start_heartbeat ;;
     stop) stop_heartbeat ;;
     status) status_heartbeat ;;
+    test) test_heartbeat ;;
     help|--help|-h) show_help ;;
-    *) echo "Unknown command. Use ./heartbeat.sh help"; exit 1 ;;
+    *) echo -e "${RED}Unknown command. Use 'heartbeat help'.${NC}" ;;
 esac
