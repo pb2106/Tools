@@ -11,6 +11,7 @@ A curated collection of system optimization, performance tuning, biofeedback, an
 3. [Minecraft Performance Optimizer](#-minecraft-performance-optimizer) - System tuning for gaming
 4. [Boot Optimization Script](#-boot-optimization-script) - Faster boot times
 5. [Essential Tools Installer](#-essential-tools-installer) - Complete Kali toolset setup
+6. [LinkedIn Learning Solver](#-linkedin-learning-solver) - Auto-completes LinkedIn Learning courses at 16x speed
 
 ---
 
@@ -521,6 +522,84 @@ chmod +x tools.sh
 sudo ./tools.sh
 # Takes 20–40 minutes, ~3–5 GB download
 ```
+
+---
+
+## 🎓 LinkedIn Learning Solver
+
+**Automated LinkedIn Learning course completer. Navigates to the first video and lets LinkedIn's built-in auto-advance play through the entire course at up to 16x speed — muted and invisible.**
+
+> ⚠️ **For personal educational use only. Use on your own account.**
+
+### What It Does
+
+Logs into LinkedIn in an incognito Chrome window, extracts all video URLs from the course TOC, navigates to the first video, injects a speed enforcer, and monitors progress as LinkedIn auto-advances through each video. Re-injects the enforcer on every transition. Always starts from video 1 — no resume.
+
+### Features
+
+| Feature | Description |
+|---|---|
+| Auto-advance | Relies on LinkedIn's native next-video system — no tab spam |
+| Speed enforcer | Locks playback at up to 16x, re-injected on each new video |
+| Adaptive speed | Short videos slower, long videos faster (or flat 16x always) |
+| Muted playback | All videos muted + volume zeroed automatically |
+| Oops recovery | Detects LinkedIn error pages and reloads automatically |
+| Multi-course | Multiple course URLs run in parallel, each in its own session |
+| Incognito | No profile saved to disk — fresh session every run |
+
+### Installation
+
+```bash
+pip install selenium webdriver-manager
+
+# Linux: also install Chromium
+sudo apt install chromium chromium-driver -y
+```
+
+### Usage
+
+```bash
+python3 linked_solver.py
+```
+
+1. Enter your LinkedIn email and password
+2. Paste a course URL (e.g. `https://www.linkedin.com/learning/python-essential-training`)
+3. Toggle **Adaptive Speed** if desired
+4. Click **Start All Courses**
+
+### How It Works
+
+```
+Login (incognito Chrome)
+  → Load course page + expand TOC
+  → Extract all video URLs
+  → Navigate to video 1
+  → Inject speed enforcer (mute + 16x)
+  → Monitor URL — on each auto-advance:
+       → Log completion of previous video
+       → Re-inject enforcer for new video
+  → Wait for last video.ended event
+  → Done
+```
+
+### Resource Usage
+
+- **RAM:** ~150–250 MB (one Chrome instance per course)
+- **CPU:** <1% (polling every 3s)
+- **Network:** Normal LinkedIn traffic only
+
+### Troubleshooting
+
+**Chrome won't launch:**
+```bash
+sudo apt install chromium chromium-driver -y
+```
+
+**Videos not found:**  
+Make sure the URL is the course overview page (not a specific video), e.g. `https://www.linkedin.com/learning/course-name`
+
+**Speed enforcer not sticking:**  
+LinkedIn updates may override the enforcer — the script re-injects every ~30s as a fallback.
 
 ---
 
